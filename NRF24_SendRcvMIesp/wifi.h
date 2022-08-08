@@ -1,5 +1,3 @@
-
-
 #ifndef __WIFI_H
 #define __WIFI_H
 
@@ -10,12 +8,11 @@
 #include <Pinger.h>       // von url=https://www.technologytourist.com   
 
 
-
 String SSID = "";         // bestes WLan
 uint8_t WIFIConnect = 5;//not connect 0 else 5
 
 //Pinger pinger;
-IPAddress ROUTER = IPAddress(192,168,1,1);
+IPAddress ROUTER = IPAddress(PINGER_IP);
 
 // Prototypes
 time_t getNow ();

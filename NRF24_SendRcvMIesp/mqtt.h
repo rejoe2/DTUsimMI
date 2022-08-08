@@ -6,23 +6,20 @@
 
 #include <ArduinoMqttClient.h>
 
-
-
 uint8_t checkAllPV(); //forward decl
 uint8_t HopRcvCh();//forward decl
 
-uint8_t MQTT = 0;
+uint8_t MQTT = MQTT_ON;
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
-const char MQTTbroker[] = "192.168.1.11";
-int        MQTTport     = 1883;
+const char MQTTbroker[] = MSERVER_IP;    //works
+int        MQTTport     = MSERVER_PORT;  //works
+const char MQTTid[]     = MQTT_ID;       //doesn't work
 float P_DTSU=0;
 
-
-
-char ValueStr[30]="";
-char TopicStr[30]="";
+char ValueStr[30]=VALUE_TOPIC;           //not checked yet
+char TopicStr[30]=SET_TOPIC;             //not checked yet
 
 void onMqttMessage(int messageSize) {
 //----------------------------------------------------------------------------------------

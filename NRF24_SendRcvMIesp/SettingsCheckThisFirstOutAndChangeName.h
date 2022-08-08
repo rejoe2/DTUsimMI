@@ -104,6 +104,17 @@ int MINPOWER = int(MAXPOWER / 10); //watt under this is the WR off
 //#define SSID_PREFIX2         "wlan2-Prefix"		// <<<<<<<<<<<<<<<<<<<<<<< anpassen
 #define SSID_PASSWORD        "pw"			// <<<<<<<<<<<<<<<<<<<<<<< anpassen
 
+// Pinger IP
+#define PINGER_IP  {192,168,1,1}
+
+// MQTT
+bool MQTT_ON = 1;
+#define MSERVER_IP   "192.168.1.11"
+#define MSERVER_PORT 1883
+#define MQTT_ID      "HOYMILES-DTU"
+#define VALUE_TOPIC "inverter1"
+#define SET_TOPIC   "inverter1/set"
+
 // zur Berechnung von Sonnenauf- und -untergang
 #define  geoBreite  48.2866
 #define  geoLaenge  7.3416
