@@ -903,7 +903,7 @@ void loop(void) {
            }
          else {
            //DEBUG_OUT.println(F("No MQTT.."));
-           MQTT=setupMQTT();
+           if (!MQTT) MQTT=setupMQTT();
            }
          }
          //UpdtCnt=0;
