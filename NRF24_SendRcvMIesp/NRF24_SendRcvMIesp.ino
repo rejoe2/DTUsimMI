@@ -170,6 +170,7 @@ void ReadRFBuf(void){
       p->timestamp = micros(); // Micros does not increase in interrupt, but it can be used.
       p->packetsLost = lostPacketCount;
       radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+      //radio1.setChannel(channels[hoptx]);
       uint8_t packetLen = radio1.getPayloadSize();
       if (packetLen > MAX_RF_PAYLOAD_SIZE)
         packetLen = MAX_RF_PAYLOAD_SIZE;
@@ -313,6 +314,8 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
 
   if (CHANNEL_HOP_TX){
     if (DEBUG_TX_DATA) {
+      DEBUG_OUT.print(millis());
+      DEBUG_OUT.print(F(" "));
       if (channels[hoptx]<10)
         DEBUG_OUT.print(F("Send... CH0"));
       else DEBUG_OUT.print(F("Send... CH"));
@@ -330,6 +333,7 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
 
 
   if (DEBUG_TX_DATA){ //packet buffer to output
+    //DEBUG_OUT.print(millis());
     for (uint8_t i = 0; i < len; i++){
         if (buf[i]==0){DEBUG_OUT.print(F("00"));}
         else { if (buf[i]<0x10) {DEBUG_OUT.print(F("0"));}
@@ -469,7 +473,7 @@ void isTime2Send (void) {
         else if (MI600_DataCMD == 0x11) MI600_DataCMD=0x09;
         //DEBUG_OUT.print(MI600_DataCMD);      DEBUG_OUT.println(" MI600");
         MIDataCMD=MI600_DataCMD;
-        tickMillis += 800;    //200;
+        tickMillis += 4700;    //200;
         }
     if (MI1500){        // 4 PVs
          //DEBUG_OUT.println("MI1500");
@@ -660,6 +664,7 @@ void MI1500DataMsg(NRF24_packet_t *p){
   sprintf(cStr,"CH:%2i PV%1i MI:%4iW Grd:%4iW Lm:%4iW %4sW %4sV %3sA %4iWh %4sACV %3sHz %3sC S:%i ",
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
+  DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
   if (p->packet[2] != 0xB9) tickMillis = millis();
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
@@ -710,8 +715,11 @@ void MI600DataMsg(NRF24_packet_t *p){
   sprintf(cStr,"CH:%2i PV%1i MI:%4iW Grd:%4iW Lm:%4iW %4sW %4sV %3sA %4iWh %4sACV %3sHz %3sC S:%i ",
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
+  DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
+  DEBUG_OUT.println(cStr);
   DEBUG_OUT.println(cStr);
   if (p->packet[2] == 0x89) tickMillis = millis();
+  timeLastAck = millis();
 }//--------------------------------------------------------------------------------------------------
 
 void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
@@ -874,7 +882,8 @@ void loop(void) {
 //===============================================================================================
   //DEBUG_OUT.print(F("loop\b\b\b\b"));
   //radio1.setChannel(HopRcvCh());//setChannel(DEFAULT_RECV_CHANNEL);
-  radio1.setChannel(channels[hoptx]);//setChannel(DEFAULT_RECV_CHANNEL);
+  RcvCH = channels[hoptx];
+  radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
   radio1.startListening();
 
   if(! INTERRUPT)
