@@ -67,8 +67,8 @@ uint8_t         channelIdx            = 1;                         // fange mit 
 uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
 
 static unsigned long timeLastPacket = millis();
-static unsigned long timeLastAck    = 0;                           // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
 static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
+static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
 static uint8_t hoptx = 0;
 
 // Function forward declaration
@@ -319,8 +319,9 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
       DEBUG_OUT.print(channels[hoptx]);
       DEBUG_OUT.print(F(" "));
       }
+    TxCH=hoptx;
     if (millis() - timeLastAck > timeOutChanAck) {
-      TxCH=hoptx; hoptx++;
+      TxCH=++hoptx; // hoptx++;
       if (hoptx >= sizeof(channels))// / sizeof(channels[0]) )
         hoptx = 0;
       }
@@ -475,6 +476,7 @@ void isTime2Send (void) {
         if (MIDataCMD > 0x0039) {
             MIDataCMD= 0x0036;
             tickMillis += 800;    //200;
+           }
         }
 
     switch(telegram) {
@@ -659,7 +661,7 @@ void MI1500DataMsg(NRF24_packet_t *p){
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.println(cStr);
-  if (p->packet[2] != 0xB9) tickMillis = 0;
+  if (p->packet[2] != 0xB9) tickMillis = millis();
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
 void MI600StsMsg (NRF24_packet_t *p){
@@ -709,7 +711,7 @@ void MI600DataMsg(NRF24_packet_t *p){
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.println(cStr);
-  if (p->packet[2] == 0x89) tickMillis = 0;
+  if (p->packet[2] == 0x89) tickMillis = millis();
 }//--------------------------------------------------------------------------------------------------
 
 void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
