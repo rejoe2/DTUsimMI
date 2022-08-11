@@ -1,4 +1,6 @@
 /* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
+/* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
+/* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
 Getestet auf ESP8266/ArduinoUNO.
 https://www.mikrocontroller.net/topic/525778
 https://github.com/hm-soft/Hoymiles-DTU-Simulation
@@ -57,15 +59,17 @@ static NRF24_packet_t bufferData[PACKET_BUFFER_SIZE];
 static CircularBuffer<NRF24_packet_t> packetBuffer(bufferData, sizeof(bufferData) / sizeof(bufferData[0]));
 static Serial_header_t SerialHdr;
 
-
 static uint16_t lastCRC;
 static uint16_t crc;
 
-uint8_t         channels[]            = {3,23, 40, 61, 75};   //{1, 3, 6, 9, 11, 23, 40, 61, 75}
+uint8_t         channels[]            = {3, 23, 40, 61, 75};   //{1, 3, 6, 9, 11, 23, 40, 61, 75}
 uint8_t         channelIdx            = 1;                         // fange mit 23 an
 uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
 
 static unsigned long timeLastPacket = millis();
+static unsigned long timeLastAck    = 0;                           // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
+static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
+static uint8_t hoptx = 0;
 
 // Function forward declaration
 //static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len);
@@ -294,7 +298,7 @@ void setup(void) {
 
   DEBUG_OUT.print(F("Microinverter is  "));DEBUG_OUT.println(MIWHAT);
 
-  DEBUG_OUT.println(F("Setup finished --------Type 1  for HELP-----------"));
+  DEBUG_OUT.println(F("Setup finished --------Type 1 for HELP-----------"));
 
 
 }//---setup------------------------------------------------------------------------------------
@@ -303,7 +307,7 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
 //----------------------------------------------------------------------------------------------------
 
   if(INTERRUPT) DISABLE_EINT;
-  static uint8_t hoptx = 0;
+  //static uint8_t hoptx = 0;
 
   radio1.flush_tx();
 
@@ -315,9 +319,11 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
       DEBUG_OUT.print(channels[hoptx]);
       DEBUG_OUT.print(F(" "));
       }
-    TxCH=hoptx; hoptx++;
-    if (hoptx >= sizeof(channels))// / sizeof(channels[0]) )
-      hoptx = 0;
+    if (millis() - timeLastAck > timeOutChanAck) {
+      TxCH=hoptx; hoptx++;
+      if (hoptx >= sizeof(channels))// / sizeof(channels[0]) )
+        hoptx = 0;
+      }
     }
   else    TxCH=DEFAULT_SEND_CHANNEL;
 
@@ -341,6 +347,9 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
   if (DEBUG_TX_DATA) {DEBUG_OUT.print(".....send res ");
     DEBUG_OUT.println(res);
     }
+  if ( res ) { //we got an hardware ACK!
+      timeLastAck = millis();
+  }
   //radio1.print_status(radio1.get_status());
   // Try to avoid zero payload acks (has no effect)
   radio1.openWritingPipe(DUMMY_RADIO_ID);
@@ -350,7 +359,8 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
   radio1.setCRCLength(RF24_CRC_DISABLED);
 
  if(INTERRUPT) ENABLE_EINT;
- radio1.setChannel(HopRcvCh());
+ //radio1.setChannel(HopRcvCh());
+ radio1.setChannel(channels[hoptx]);
  radio1.startListening(); //***************************************
 
 }//----SendPacket-------------------------------------------------------------------------------------------------------
@@ -449,19 +459,24 @@ void isTime2Send (void) {
     if (MI300) {        // 1 PV
         MIDataCMD=0x09;
         //DEBUG_OUT.println("MI300");
+        tickMillis += 4700;    //200;
         }
     if (MI600){         // 2 PVs
-        if (MI600_DataCMD == 0x09) MI600_DataCMD=0x11;
+        if (MI600_DataCMD == 0x09) {
+            MI600_DataCMD=0x11;
+        }
         else if (MI600_DataCMD == 0x11) MI600_DataCMD=0x09;
         //DEBUG_OUT.print(MI600_DataCMD);      DEBUG_OUT.println(" MI600");
         MIDataCMD=MI600_DataCMD;
+        tickMillis += 800;    //200;
         }
     if (MI1500){        // 4 PVs
          //DEBUG_OUT.println("MI1500");
-        if (MIDataCMD > 0x0039) MIDataCMD= 0x0036;
+        if (MIDataCMD > 0x0039) {
+            MIDataCMD= 0x0036;
+            tickMillis += 800;    //200;
         }
 
-    
     switch(telegram) {
       case 0:
         //set SubCmd and  UsrData Limiting
@@ -644,6 +659,7 @@ void MI1500DataMsg(NRF24_packet_t *p){
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.println(cStr);
+  if (p->packet[2] != 0xB9) tickMillis = 0;
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
 void MI600StsMsg (NRF24_packet_t *p){
@@ -693,6 +709,7 @@ void MI600DataMsg(NRF24_packet_t *p){
   RcvCH,PV,(int)PMI,(int)P_DTSU,Limit,String(P_DC,1),String(U_DC,1),String(I_DC,1),
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.println(cStr);
+  if (p->packet[2] == 0x89) tickMillis = 0;
 }//--------------------------------------------------------------------------------------------------
 
 void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
@@ -853,8 +870,9 @@ void DoZeroExport(void){
 
 void loop(void) {
 //===============================================================================================
-  DEBUG_OUT.print(F("loop\b\b\b\b"));
-  radio1.setChannel(HopRcvCh());//setChannel(DEFAULT_RECV_CHANNEL);
+  //DEBUG_OUT.print(F("loop\b\b\b\b"));
+  //radio1.setChannel(HopRcvCh());//setChannel(DEFAULT_RECV_CHANNEL);
+  radio1.setChannel(channels[hoptx]);//setChannel(DEFAULT_RECV_CHANNEL);
   radio1.startListening();
 
   if(! INTERRUPT)
