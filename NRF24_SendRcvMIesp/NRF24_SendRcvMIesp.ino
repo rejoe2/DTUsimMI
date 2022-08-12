@@ -1,6 +1,4 @@
 /* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
-/* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
-/* die orig. SW ist vom Hubi, wurde von mir(Ziyat T.) für den MI-WR abgeaendert.
 Getestet auf ESP8266/ArduinoUNO.
 https://www.mikrocontroller.net/topic/525778
 https://github.com/hm-soft/Hoymiles-DTU-Simulation
@@ -69,6 +67,7 @@ uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
 static unsigned long timeLastPacket = millis();
 static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
 static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
+static unsigned long maxTimeForNextPing = 1200000; // Wartezeit, bis zur nächsten aktiven Anfrage (20 Minuten)
 static uint8_t hoptx = 0;
 
 // Function forward declaration
@@ -666,7 +665,8 @@ void MI1500DataMsg(NRF24_packet_t *p){
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
-  if (p->packet[2] != 0xB9) tickMillis = millis();
+  //if (p->packet[2] != 0xB9) tickMillis = millis();
+  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
 void MI600StsMsg (NRF24_packet_t *p){
@@ -718,7 +718,8 @@ void MI600DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
   DEBUG_OUT.println(cStr);
-  if (p->packet[2] == 0x89) tickMillis = millis();
+  //if (p->packet[2] == 0x89) tickMillis = millis();
+  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
   timeLastAck = millis();
 }//--------------------------------------------------------------------------------------------------
 
