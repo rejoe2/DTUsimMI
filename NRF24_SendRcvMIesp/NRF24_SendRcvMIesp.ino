@@ -60,15 +60,22 @@ static Serial_header_t SerialHdr;
 static uint16_t lastCRC;
 static uint16_t crc;
 
-uint8_t         channels[]            = {3, 23, 40, 61, 75};   //{1, 3, 6, 9, 11, 23, 40, 61, 75}
+uint8_t         channels[]            = { 75, 23, 61, 3, 40 };   //{1, 3, 6, 9, 11, 23, 40, 61, 75}
 uint8_t         channelIdx            = 1;                         // fange mit 23 an
 uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
+uint8_t         DEFAULT_BACK_CHANNEL  = channels[channelIdx + 1];  // = 3
 
 static unsigned long timeLastPacket = millis();
 static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
-static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
-static unsigned long maxTimeForNextPing = 1200000; // Wartezeit, bis zur nächsten aktiven Anfrage (20 Minuten)
+static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel für tx
+static unsigned long maxTimeForNextPing = 50000;                   // MI-1500 wechselt spätestens nach einer Minute 
+static unsigned long forceTimeForNextPing = 0;                     // try to send request at startup 
+
 static uint8_t hoptx = 0;
+static bool received[4]  = {false};
+static bool requestOpen  = true;
+static bool hoprxActive  = true;
+static unsigned long forceTimeForNextRxHop = 0;
 
 // Function forward declaration
 //static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len);
@@ -449,13 +456,24 @@ void isTime2Send (void) {
 //----------------------------------------------------------------------------------------------------------------------
   static uint8_t MIDataCMD = 0x36;   //begin with first PV
   static uint8_t MI600_DataCMD = 0x09 ;
+  static uint8_t ExpectedMIData = 0x36;   //begin with first PV
   static uint8_t telegram = 0;
   int32_t size = 0;
   uint64_t dest = WR1_RADIO_ID;
   uint8_t UsrData[10]; 
   char Cmd = 0;  // Second timer
+  unsigned long timeNow = millis();
+  
+  //force send due to upcoming timeout for MI-1500?
+  if ( timeNow - forceTimeForNextPing > maxTimeForNextPing ) { 
+     forceTimeForNextPing = timeNow + maxTimeForNextPing; // reset timer
+     tickMillis = timeNow;                                // force sendout
+     // new period
+     requestOpen = false;
+     received[4] = {false};
+  }
 
-  if (millis() >= tickMillis) {
+  if (timeNow >= tickMillis  ) { 
     tickMillis += 300;    //200;
 
     if (telegram > sizeof(channels))    telegram = 0;
@@ -466,20 +484,31 @@ void isTime2Send (void) {
         tickMillis += 4700;    //200;
         }
     if (MI600){         // 2 PVs
-        if (MI600_DataCMD == 0x09) {
+        /*if (MI600_DataCMD == 0x09) {
             MI600_DataCMD=0x11;
         }
         else if (MI600_DataCMD == 0x11) MI600_DataCMD=0x09;
+        */
         //DEBUG_OUT.print(MI600_DataCMD);      DEBUG_OUT.println(" MI600");
-        MIDataCMD=MI600_DataCMD;
-        tickMillis += 4700;    //200;
+        received[4]  = {false}
+        
+        MIDataCMD=!received[0] ? 0x09 : 0x11;
+        //tickMillis += 4700;    //200;
         }
     if (MI1500){        // 4 PVs
          //DEBUG_OUT.println("MI1500");
-        if (MIDataCMD > 0x0039) {
+        /*if (MIDataCMD > 0x0039) {
             MIDataCMD= 0x0036;
             tickMillis += 800;    //200;
-           }
+           } */
+        MIDataCMD = 0x0036
+        do ; while ( i > 0);
+        for (int8_t i = 0; i < 4; i++) {
+            if (!received[i]) {
+                break;
+            }
+            ++MIDataCMD;
+          }
         }
 
     switch(telegram) {
@@ -638,10 +667,10 @@ void MI1500DataMsg(NRF24_packet_t *p){
   FCNT = (uint8_t)(p->packet[26]);
   FCODE = (uint8_t)(p->packet[27]);
 
-  if (p->packet[2] == 0xB6)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;}//port 1
-  if (p->packet[2] == 0xB7)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1;}//port 2
-  if (p->packet[2] == 0xB8)  {PV= 2; TotalP[3]=P_DC; pvCnt[2]=1;}//port 3
-  if (p->packet[2] == 0xB9)  {PV= 3; TotalP[4]=P_DC; pvCnt[3]=1;}//port 4
+  if (p->packet[2] == 0xB6)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1; received[0]=1}//port 1
+  if (p->packet[2] == 0xB7)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1; received[1]=1}//port 2
+  if (p->packet[2] == 0xB8)  {PV= 2; TotalP[3]=P_DC; pvCnt[2]=1; received[2]=1}//port 3
+  if (p->packet[2] == 0xB9)  {PV= 3; TotalP[4]=P_DC; pvCnt[3]=1; received[3]=1}//port 4
   TotalP[0]=TotalP[1]+TotalP[2]+TotalP[3]+TotalP[4];//in TotalP[0] is the totalPvW
   if((P_DC>PVPOWER) || (P_DC<0) || (TotalP[0]>MAXPOWER)){// cant be!!
     sprintf(cStr,"Wrong Data.. PV%1i %5sW Total:%5sW ", PV,String(P_DC,1),String(TotalP[0],1) );
@@ -666,7 +695,10 @@ void MI1500DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
   //if (p->packet[2] != 0xB9) tickMillis = millis();
-  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  if (received[0] && received[1] && received[2] && received[3]) {
+    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+    requestOpen  = false;
+  }
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
 void MI600StsMsg (NRF24_packet_t *p){
@@ -678,6 +710,12 @@ void MI600StsMsg (NRF24_packet_t *p){
   VALUES[PV][5]=STAT;
   VALUES[PV][6]=FCNT;
   VALUES[PV][7]=FCODE;
+  sprintf(cStr,"CH:%2i: MI600 status message",
+  RcvCH);//, (String)getTimeStr(getNow()) );
+  DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
+  DEBUG_OUT.println(cStr);
+  forceTimeForNextRxHop = millis() + 4500; // listen for at least 4.5 seconds
+  hoprxActive = 0; 
 
 }//--MI600StsMsg---------------------------------------------------------------------
 
@@ -696,8 +734,8 @@ void MI600DataMsg(NRF24_packet_t *p){
    DataOK = 1;  //we need to check this, if no crc
   else { DEBUG_OUT.println(F("Data Wrong!!"));DataOK =0; return;}
 
-  if (p->packet[2] == 0x89)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;}//port 1
-  if (p->packet[2] == 0x91)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1;}//port 2
+  if (p->packet[2] == 0x89)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1; received[0]=1 }//port 1
+  if (p->packet[2] == 0x91)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1; received[1]=1 }//port 2
 
   TotalP[0]=TotalP[1]+TotalP[2]+TotalP[3]+TotalP[4];//in TotalP[0] is the totalPV power
   if((P_DC>400) || (P_DC<0) || (TotalP[0]>MAXPOWER)){// cant be!!
@@ -719,7 +757,11 @@ void MI600DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.println(cStr);
   DEBUG_OUT.println(cStr);
   //if (p->packet[2] == 0x89) tickMillis = millis();
-  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  if (received[0] && received[1]) {
+    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+    requestOpen  = false;
+  }
+  //tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
   timeLastAck = millis();
 }//--------------------------------------------------------------------------------------------------
 
@@ -841,10 +883,17 @@ uint8_t HopRcvCh(void){
 //----------------------------------------------------------------------------------------------------
  static uint8_t hop=-1;
 
+    if ( !hoprxActive || ( millis() - forceTimeForNextRxHop > 0 ) ) return(RcvCH);
+
     hop++;
+    if (hop == hoptx) hop++;    // we want to see what's going on on the other channels!
     if (hop >= sizeof(channels))// / sizeof(channels[0]) )
       hop = 0;
     RcvCH = channels[hop];
+    if ( millis() - forceTimeForNextRxHop <= 0 ) {
+        forceTimeForNextRxHop = millis() + 4500; // listen for at least 4.5 seconds
+        hoprxActive = 1;
+    }
     return(RcvCH);
 }//----HopRcvCh----------------------------------------------------------------------------------------
 
@@ -883,7 +932,8 @@ void loop(void) {
 //===============================================================================================
   //DEBUG_OUT.print(F("loop\b\b\b\b"));
   //radio1.setChannel(HopRcvCh());//setChannel(DEFAULT_RECV_CHANNEL);
-  RcvCH = channels[hoptx];
+  if ( requestOpen ) RcvCH = channels[hoptx];
+  else { RcvCH = HopRcvCh(); }
   radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
   radio1.startListening();
 
