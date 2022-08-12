@@ -75,6 +75,7 @@ static uint8_t hoptx = 0;
 static bool received[4]  = {false};
 static bool requestOpen  = true;
 static bool hoprxActive  = true;
+static uint8_t hop=1; // start as well with the rx channel
 static unsigned long forceTimeForNextRxHop = 0;
 
 // Function forward declaration
@@ -330,10 +331,14 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
       }
     TxCH=hoptx;
     if (millis() - timeLastAck > timeOutChanAck) {
-      TxCH=++hoptx; // hoptx++;
-      if (hoptx >= sizeof(channels))// / sizeof(channels[0]) )
-        hoptx = 0;
-      }
+      if (!hoprxActive && hoptx != hop) {
+          hoptx = hop++; // we have an alternative channel and will have to find another
+      } else {
+        TxCH=++hoptx; // hoptx++;
+        if (hoptx >= sizeof(channels))// / sizeof(channels[0]) )
+          hoptx = 0;
+        }
+    }
     }
   else    TxCH=DEFAULT_SEND_CHANNEL;
 
@@ -881,7 +886,7 @@ void RFAnalyse(void) {
 
 uint8_t HopRcvCh(void){
 //----------------------------------------------------------------------------------------------------
- static uint8_t hop=-1;
+// static uint8_t hop=-1;
 
     if ( !hoprxActive || ( millis() - forceTimeForNextRxHop > 0 ) ) return(RcvCH);
 
@@ -890,6 +895,7 @@ uint8_t HopRcvCh(void){
     if (hop >= sizeof(channels))// / sizeof(channels[0]) )
       hop = 0;
     RcvCH = channels[hop];
+    
     if ( millis() - forceTimeForNextRxHop <= 0 ) {
         forceTimeForNextRxHop = millis() + 4500; // listen for at least 4.5 seconds
         hoprxActive = 1;
