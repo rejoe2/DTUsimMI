@@ -69,6 +69,7 @@ static unsigned long timeOutChanAck = 60000;                       // wenn zu la
 static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
 static unsigned long maxTimeForNextPing = 1200000; // Wartezeit, bis zur nächsten aktiven Anfrage (20 Minuten)
 static uint8_t hoptx = 0;
+static bool waitSts = false;
 
 // Function forward declaration
 //static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len);
@@ -299,8 +300,8 @@ void setup(void) {
   DEBUG_OUT.print(F("Microinverter is  "));DEBUG_OUT.println(MIWHAT);
 
   DEBUG_OUT.println(F("Setup finished --------Type 1 for HELP-----------"));
-
-
+  radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+  radio1.startListening();
 }//---setup------------------------------------------------------------------------------------
 
 static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
@@ -347,6 +348,9 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
   radio1.enableDynamicPayloads();
   radio1.setAutoAck(true);
   radio1.setRetries(3, 15);
+  if (DEBUG_TX_DATA) {
+    DEBUG_OUT.println(millis());
+    }
   uint8_t res = radio1.write(buf, len);
   if (DEBUG_TX_DATA) {DEBUG_OUT.print(".....send res ");
     DEBUG_OUT.println(res);
@@ -532,6 +536,13 @@ void isTime2Send (void) {
       }  //switch telegram
     SendPacket(dest, (uint8_t *)&sendBuf, size);
 
+    if (MI600_DataCMD == 0x09 || MI600_DataCMD==0x11 ) {
+          waitSts = 1;
+          RcvCH = channels[hoptx-1];
+          radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+          radio1.startListening();
+          tickMillis = millis()+200;
+    }
     telegram++; 
     MIDataCMD++;
     } //if millis
@@ -678,6 +689,7 @@ void MI600StsMsg (NRF24_packet_t *p){
   VALUES[PV][5]=STAT;
   VALUES[PV][6]=FCNT;
   VALUES[PV][7]=FCODE;
+  
 
 }//--MI600StsMsg---------------------------------------------------------------------
 
@@ -717,9 +729,10 @@ void MI600DataMsg(NRF24_packet_t *p){
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
-  DEBUG_OUT.println(cStr);
-  //if (p->packet[2] == 0x89) tickMillis = millis();
-  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  if (p->packet[2] == 0x89) { tickMillis = millis(); }
+  else {
+    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  }
   timeLastAck = millis();
 }//--------------------------------------------------------------------------------------------------
 
@@ -765,6 +778,10 @@ void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
       case 0x88:    //1-2 ports
       case 0x92:    //2 ports                ev change with 0x92!!!!!!!!!
           MI600StsMsg(p);
+          waitSts = 0;
+          RcvCH = channels[hoptx];
+          radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+          radio1.startListening();
       break;
     default:
        sprintf(cStr,"New CMD  %x \t",p->packet[2]); DEBUG_OUT.print (cStr);
@@ -883,9 +900,20 @@ void loop(void) {
 //===============================================================================================
   //DEBUG_OUT.print(F("loop\b\b\b\b"));
   //radio1.setChannel(HopRcvCh());//setChannel(DEFAULT_RECV_CHANNEL);
-  RcvCH = channels[hoptx];
-  radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
-  radio1.startListening();
+  if ( waitSts && millis() >= tickMillis ) {
+    RcvCH = channels[hoptx];
+    radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+    radio1.startListening();
+    tickMillis += 200;
+    DEBUG_OUT.println(F("backchannel timed out..."));
+    waitSts = 0;
+  } else {
+      if (!waitSts) {
+      RcvCH = channels[hoptx];
+      radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+      radio1.startListening();
+    }
+  }
 
   if(! INTERRUPT)
     ReadRFBuf(); //polling
