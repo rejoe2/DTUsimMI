@@ -66,10 +66,18 @@ uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
 
 static unsigned long timeLastPacket = millis();
 static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
-static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel
-static unsigned long maxTimeForNextPing = 1200000; // Wartezeit, bis zur nächsten aktiven Anfrage (20 Minuten)
+static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel für rx
+
+static unsigned long backtickDuration = 200;                       // wie lange auf STS-Message warten? (Nur MI-600, ggf. jünger?)
+
+static unsigned long maxTimeForNextPing = 50000;                   // MI-1500 wechselt spätestens nach einer Minute 
+static unsigned long forceTimeForNextPing = 0;                     // try to send request at startup 
+
 static uint8_t hoptx = 0;
 static bool waitSts = false;
+//static bool received[4]  = {false};
+static bool stsmsg[2] = {false};
+static uint8_t retry[4] = {0};
 
 // Function forward declaration
 //static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len);
@@ -452,39 +460,80 @@ void SerialCmdHandle(void){
 void isTime2Send (void) {
 //----------------------------------------------------------------------------------------------------------------------
   static uint8_t MIDataCMD = 0x36;   //begin with first PV
-  static uint8_t MI600_DataCMD = 0x09 ;
+  //static uint8_t MI600_DataCMD = 0x09 ;
   static uint8_t telegram = 0;
   int32_t size = 0;
   uint64_t dest = WR1_RADIO_ID;
   uint8_t UsrData[10]; 
   char Cmd = 0;  // Second timer
 
-  if (millis() >= tickMillis) {
-    tickMillis += 300;    //200;
+  unsigned long timeNow = millis();
+
+  //force send due to upcoming timeout for MI-1500?
+  if ( timeNow - forceTimeForNextPing > maxTimeForNextPing ) { 
+     forceTimeForNextPing = timeNow + maxTimeForNextPing; // reset timer
+     tickMillis = timeNow;                                // force sendout
+     // new period
+     pvCnt[4] = {0};
+     stsmsg[2] = {false};
+     retry[4] = {0};
+  }
+
+  if (timeNow >= tickMillis) {
+    tickMillis += backtickDuration;    //200;
 
     if (telegram > sizeof(channels))    telegram = 0;
 
-    if (MI300) {        // 1 PV
+    if (MI300 || (MI600 && !pvCnt[0])) {        // 1rst PV
         MIDataCMD=0x09;
         //DEBUG_OUT.println("MI300");
-        tickMillis += 4700;    //200;
+        //tickMillis += 4700;    //200;
+        retry[0]++;
+        if ( retry[0] > 5 ) {
+            tickMillis =  timeNow + maxTimeForNextPing;    //give up...
+        } else {
+            tickMillis += 50*retry[0];
         }
-    if (MI600){         // 2 PVs
-        if (MI600_DataCMD == 0x09) {
+    else if (MI600){         // 2. PV?
+        MIDataCMD=0x11;
+        /*if (MI600_DataCMD == 0x09) {
             MI600_DataCMD=0x11;
         }
         else if (MI600_DataCMD == 0x11) MI600_DataCMD=0x09;
         //DEBUG_OUT.print(MI600_DataCMD);      DEBUG_OUT.println(" MI600");
-        MIDataCMD=MI600_DataCMD;
-        tickMillis += 4700;    //200;
+        MIDataCMD=MI600_DataCMD;*/
+        if ( !pvCnt[1] ) {
+            retry[1]++;
+            if ( retry[1] > 5 ) {
+                tickMillis =  timeNow + maxTimeForNextPing;    //give up...
+            } else {
+                tickMillis += 50*retry[1];
+            }
         }
+    }
+
     if (MI1500){        // 4 PVs
-         //DEBUG_OUT.println("MI1500");
+         /*/DEBUG_OUT.println("MI1500");
         if (MIDataCMD > 0x0039) {
             MIDataCMD= 0x0036;
             tickMillis += 800;    //200;
-           }
-        }
+           }*/
+        MIDataCMD = 0x0036;
+        for (int8_t i = 0; i < 4; i++) {
+            retry[i]++;
+            retrysum++;
+            if (!pvCnt[i] && retry[i] < 6) {
+                tickMillis += 50*retry[i];
+                break;
+            }
+            ++MIDataCMD;
+       }
+       if ( retry[3]>5 && retry[2]>5 && retry[1]>5 && retry[0]>5 ) { 
+            tickMillis =  timeNow + maxTimeForNextPing;    //give up...
+       };
+     }
+
+    }
 
     switch(telegram) {
       case 0:
@@ -536,7 +585,7 @@ void isTime2Send (void) {
       }  //switch telegram
     SendPacket(dest, (uint8_t *)&sendBuf, size);
 
-    if (MI600_DataCMD == 0x09 || MI600_DataCMD==0x11 ) {
+    if (MIDataCMD == 0x09 || MIDataCMD == 0x11 ) {
           waitSts = 1;
           RcvCH = channels[hoptx-1];
           radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
@@ -544,7 +593,7 @@ void isTime2Send (void) {
           tickMillis = millis()+200;
     }
     telegram++; 
-    MIDataCMD++;
+    //MIDataCMD++;
     } //if millis
 }//----isTime2Send---------------------------------------------------------------------------------------
 
@@ -677,7 +726,10 @@ void MI1500DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
   //if (p->packet[2] != 0xB9) tickMillis = millis();
-  tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  //tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  if (checkAllPV() && checkAllSTS()) {
+    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  }
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
 void MI600StsMsg (NRF24_packet_t *p){
@@ -689,8 +741,11 @@ void MI600StsMsg (NRF24_packet_t *p){
   VALUES[PV][5]=STAT;
   VALUES[PV][6]=FCNT;
   VALUES[PV][7]=FCODE;
-  
-
+  if (p->packet[2] == 0x88)  {stsmsg[0]=1;}//port 1
+  if (p->packet[2] == 0x92)  {stsmsg[1]=1;}//port 2
+  sprintf(cStr," CH:%2i: MI300/MI600 status message",
+  RcvCH);
+  DEBUG_OUT.print(millis()); DEBUG_OUT.println(cStr);
 }//--MI600StsMsg---------------------------------------------------------------------
 
 
@@ -708,10 +763,10 @@ void MI600DataMsg(NRF24_packet_t *p){
    DataOK = 1;  //we need to check this, if no crc
   else { DEBUG_OUT.println(F("Data Wrong!!"));DataOK =0; return;}
 
-  if (p->packet[2] == 0x89)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;}//port 1
-  if (p->packet[2] == 0x91)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1;}//port 2
+  if (p->packet[2] == 0x89)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1}//port 1
+  if (p->packet[2] == 0x91)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1}//port 2
 
-  TotalP[0]=TotalP[1]+TotalP[2]+TotalP[3]+TotalP[4];//in TotalP[0] is the totalPV power
+  TotalP[0]=TotalP[1]+TotalP[2];//in TotalP[0] is the totalPV power
   if((P_DC>400) || (P_DC<0) || (TotalP[0]>MAXPOWER)){// cant be!!
     TotalP[0]=0;
     return;
@@ -729,11 +784,13 @@ void MI600DataMsg(NRF24_packet_t *p){
   (int)Q_DC, String(U_AC,1), String(F_AC,1), String(TEMP,1), STAT);//, (String)getTimeStr(getNow()) );
   DEBUG_OUT.print(millis()); DEBUG_OUT.print(F(" "));
   DEBUG_OUT.println(cStr);
-  if (p->packet[2] == 0x89) { tickMillis = millis(); }
-  else {
-    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
-  }
   timeLastAck = millis();
+  
+  if ( checkAllPV() && checkAllSTS() ) {
+    tickMillis = timeLastAck + maxTimeForNextPing; //we got a message and will just wait....
+  } else {
+    tickMillis = timeLastAck;
+  }
 }//--------------------------------------------------------------------------------------------------
 
 void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
@@ -871,6 +928,16 @@ uint8_t checkAllPV(void){
     return 1;
   else
     return 0;
+}//----------------------------------------------------------------------------------------------
+
+uint8_t checkAllSTS(void){
+//-------------------------------------------------------------------------------------------------
+  if (MI1500) {
+    return 1;
+  } else if ( !stsmsg[0] || MI600 && !stsmsg[1]) {
+    return 0;
+  }
+  return 1;
 }//----------------------------------------------------------------------------------------------
 
 void DoZeroExport(void){
