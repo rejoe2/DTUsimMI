@@ -741,20 +741,28 @@ void MI1500DataMsg(NRF24_packet_t *p){
   I_DC =  (float) ((p->packet[13] << 8) + p->packet[14])/10;
   U_AC =  (float) ((p->packet[15] << 8) + p->packet[16])/10;
   F_AC =  (float) ((p->packet[17] << 8) + p->packet[18])/100;
-  P_DC =  (float)((p->packet[19] << 8) + p->packet[20])/10;
-  Q_DC =  (float)((p->packet[21] << 8) + p->packet[22])/1;
+  P_DC =  (float) ((p->packet[19] << 8) + p->packet[20])/10;
+  Q_DC =  (float) ((p->packet[21] << 8) + p->packet[22])/1;
   TEMP =  (float) ((p->packet[23] << 8) + p->packet[24])/10;
 
   if ((30<U_DC<50) && (0<I_DC<15) && (200<U_AC<300) && (45<F_AC<55) && (0<P_DC<420) && (0<TEMP<80))
    DataOK = 1;
   else { DEBUG_OUT.println(F("Data Wrong!!"));DataOK =0; return;}
 
+  if (MI1500) {
   STAT = (uint8_t)(p->packet[25] );
   FCNT = (uint8_t)(p->packet[26]);
   FCODE = (uint8_t)(p->packet[27]);
-
-  if (p->packet[2] == 0xB6)  {PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;}//port 1
-  if (p->packet[2] == 0xB7)  {PV= 1; TotalP[2]=P_DC; pvCnt[1]=1;}//port 2
+  }
+  
+  scanning = false;
+  
+  if (p->packet[2] == 0xB6 || p->packet[2] == 0x89) {
+      PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;
+      }//port 1
+  if (p->packet[2] == 0xB7 || p->packet[2] == 0x91) {
+      PV= 1; TotalP[2]=P_DC; pvCnt[1]=1;
+      }//port 2
   if (p->packet[2] == 0xB8)  {PV= 2; TotalP[3]=P_DC; pvCnt[2]=1;}//port 3
   if (p->packet[2] == 0xB9)  {PV= 3; TotalP[4]=P_DC; pvCnt[3]=1;}//port 4
   TotalP[0]=TotalP[1]+TotalP[2]+TotalP[3]+TotalP[4];//in TotalP[0] is the totalPvW
@@ -769,9 +777,11 @@ void MI1500DataMsg(NRF24_packet_t *p){
   VALUES[PV][2]=U_DC;
   VALUES[PV][3]=I_DC;
   VALUES[PV][4]=Q_DC;
+  if (MI1500) {
   VALUES[PV][5]=STAT;
   VALUES[PV][6]=FCNT;
   VALUES[PV][7]=FCODE;
+  }
 
   PMI=TotalP[0];
   LIMIT=(uint16_t)Limit;
@@ -782,8 +792,14 @@ void MI1500DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.println(cStr);
   //if (p->packet[2] != 0xB9) tickMillis = millis();
   //tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+  timeLastAck = millis();
   if (checkAllPV() && checkAllSTS()) {
-    tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
+    if (!complete) {
+        tickMillis = timeLastAck + maxTimeForNextPing; //we got all messages and will just wait....
+        complete = true;
+    } else {
+        tickMillis = timeLastAck;   // + backtickDuration?
+    }
   }
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
@@ -797,12 +813,12 @@ void MI600StsMsg (NRF24_packet_t *p){
   VALUES[PV][6]=FCNT;
   VALUES[PV][7]=FCODE;
   if (waitSts) {
-    waitSts=0;
     RcvCH = channels[hoptx];
     radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
     radio1.startListening();
+    waitSts=0;
     rfQualOk = true;            //we got an answer - most likely within a reasonable time!
-    tickMillis = timeNow + tickDuration;
+    tickMillis = millis() + tickDuration;
   }
   if (p->packet[2] == 0x88)  {stsmsg[0]=1;}//port 1
   if (p->packet[2] == 0x92)  {stsmsg[1]=1;}//port 2
@@ -896,7 +912,8 @@ void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
 
       case 0x89:    //1-2 ports
       case 0x91:    //2 ports                 ev change with 0x91!!!!!!!!!
-        MI600DataMsg(p);
+        MI1500DataMsg(p);
+        //MI600DataMsg(p);
       break;
       case 0x88:    //1-2 ports
       case 0x92:    //2 ports                ev change with 0x92!!!!!!!!!
