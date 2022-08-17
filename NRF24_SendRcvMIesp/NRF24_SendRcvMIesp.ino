@@ -5,7 +5,7 @@ https://github.com/hm-soft/Hoymiles-DTU-Simulation
 
 Alle Einstellungen sind in Settings.h !!
 
-modiefied 2022/08/16 JR
+modiefied 2022/08/17 JR
 */
 #include <stdint.h>
 #include <printf.h>
@@ -65,29 +65,34 @@ static uint16_t crc;
 uint8_t         channels[]            = {3, 23, 40, 61, 75};   //{1, 3, 6, 9, 11, 23, 40, 61, 75}
 uint8_t         channelIdx            = 1;                         // fange mit 23 an
 uint8_t         DEFAULT_SEND_CHANNEL  = channels[channelIdx];      // = 23
+uint8_t         DEFAULT_RECV_CHANNEL  = channels[channelIdx-1];
 static bool     scanning = true;
 static bool     rfQualOk = false;
+static uint8_t  optTxCh  = 10; // Do we have a "good" sending channel for this MiInv? >4 means unknown, last tested = hoptx+10
+//static bool waitSts  = false;
+static bool     complete = false;
+//static bool received[4]  = {false};
+static bool     stsmsg[2] = {false};
+static uint8_t  retry[4] = {0};
 
-static unsigned long timeLastPacket = millis();
+//static unsigned long timeLastPacket = millis();
 static unsigned long timeOutChanAck = 60000;                       // wenn zu lange nichts kommt, müssen wir wechseln; 1 Minute?
+static unsigned long timeLastSend = millis();
 static unsigned long timeLastAck    = 4294967295 - timeOutChanAck; // wenn ein Hardware-Ack kommt, haben wir vorläufig einen akzeptablen Channel für rx
 
-static unsigned long backtickDuration = 60;                       // wie lange auf STS-Message warten? (Nur MI-600, ggf. jünger?)
+//static unsigned long backtickDuration = 60;                       // wie lange auf STS-Message warten? (Nur MI-600, ggf. jünger?)
 static unsigned long tickDuration     = 200;                       // reguläre Zeit für Rollieren
-
 
 static unsigned long maxTimeForNextPing = 50000;                   // MI-1500 wechselt spätestens nach einer Minute 
 static unsigned long forceTimeForNextPing = 0;                     // try to send request at startup 
 
-static uint8_t hoptx = 0;
-static bool waitSts  = false;
-static bool complete = false;
-//static bool received[4]  = {false};
-static bool stsmsg[2] = {false};
-static uint8_t retry[4] = {0};
+
 
 // Function forward declaration
 //static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len);
+static void HopChannels();
+static void LowerChannelConfidence();
+
 char * getChannelName (uint8_t i);
 static const int    ANZAHL_VALUES         = 8;
 static float        VALUES[4][ANZAHL_VALUES] = {};
@@ -144,8 +149,8 @@ int SerCmd=0;
 int OldLimit = MINPOWER;
 uint8_t WRInfo=1;
 static uint8_t SendLimitSts=0; //quiet
-static uint8_t RcvCH = DEFAULT_RECV_CHANNEL;
-static uint8_t TxCH = DEFAULT_RECV_CHANNEL;
+static uint8_t RcvCH = channels[channelIdx-1];
+static uint8_t TxCH = channels[channelIdx];
 
 //String mStr = "";     // empty string
 char cStr[100];
@@ -355,7 +360,7 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
   //static uint8_t hoptx = 0;
 
   radio1.flush_tx();
-
+/*
   if (CHANNEL_HOP_TX){
     if (DEBUG_TX_DATA) {
       DEBUG_OUT.print(millis());
@@ -374,7 +379,7 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
       }
     }
   else    TxCH=DEFAULT_SEND_CHANNEL;
-
+*/
 
   if (DEBUG_TX_DATA){ //packet buffer to output
     //DEBUG_OUT.print(millis());
@@ -401,7 +406,7 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
     }
   if ( res ) { //we got an hardware ACK!
       timeLastAck = millis();
-      if (scanning) { 
+      if (scanning || !rfQualOk ) { 
         rfQualOk = true;
         scanning = false;
       }
@@ -414,11 +419,8 @@ static void SendPacket(uint64_t dest, uint8_t *buf, uint8_t len) {
   radio1.disableDynamicPayloads();
   radio1.setCRCLength(RF24_CRC_DISABLED);
 
- if(INTERRUPT) ENABLE_EINT;
- //radio1.setChannel(HopRcvCh());
- radio1.setChannel(channels[hoptx]);
- radio1.startListening(); //***************************************
-
+  if(INTERRUPT) ENABLE_EINT;
+  //radio1.setChannel(HopRcvCh());
 }//----SendPacket-------------------------------------------------------------------------------------------------------
 
 void SerialCmdHandle(void){
@@ -509,20 +511,22 @@ void isTime2Send (void) {
 
   unsigned long timeNow = millis();
 
-  //force send due to upcoming timeout for MI-1500?
+  if (timeNow >= tickMillis) {
+    tickMillis = timeNow+tickDuration;    //200;
+    HopChannels();
+
+if ( channelIdx == optTxCh || channelIdx == optTxCh - 10 ) {  //right slot?
+
+
+  //delete old status data
   if ( ( timeNow - forceTimeForNextPing > maxTimeForNextPing ) && !scanning ) { 
      DEBUG_OUT.println(F("next cycle"));
      forceTimeForNextPing = timeNow + maxTimeForNextPing; // reset timer
-     tickMillis = timeNow;                                // force sendout
-     // new period
      pvCnt[4] = {0};
      stsmsg[2] = {false};
      retry[4] = {0};
      complete = false;
   }
-
-  if (timeNow >= tickMillis) {
-    tickMillis = timeNow+tickDuration;    //200;
 
     if (telegram > sizeof(channels))    telegram = 0;
 
@@ -530,16 +534,9 @@ void isTime2Send (void) {
         MIDataCMD=0x09;
         //DEBUG_OUT.println("MI300");
         //tickMillis += 4700;    //200;
-        if ( !scanning ) { retry[0]++;}
+        if ( channelIdx == optTxCh ) { retry[0]++;}
         if ( retry[0] > 5 ) {
-            tickMillis =  timeNow + maxTimeForNextPing;    //give up...
-            if ( rfQualOk ) {
-                rfQualOk = false;
-            } else {
-                scanning = true;
-            }
-        } else {
-            tickMillis += 50*retry[0];
+            LowerChannelConfidence();
         }
     }
     else if (MI600){         // 2. PV?
@@ -553,15 +550,7 @@ void isTime2Send (void) {
         if ( !pvCnt[1] ) {
             retry[1]++;
             if ( retry[1] > 5 ) {
-                tickMillis =  timeNow + maxTimeForNextPing;    //give up...
-                if ( rfQualOk ) {
-                    rfQualOk = false;
-                } else {
-                    scanning = true;
-                    DEBUG_OUT.println(F("restart scanning"));
-                }
-            } else {
-                tickMillis += 50*retry[1];
+                LowerChannelConfidence();
             }
         }
     }
@@ -574,21 +563,14 @@ void isTime2Send (void) {
            }*/
         MIDataCMD = 0x0036;
         for (int8_t i = 0; i < 4; i++) {
-            if ( !scanning ) { retry[0]++;}
+            if ( channelIdx == optTxCh ) { retry[0]++;}
             if (!pvCnt[i] && retry[i] < 6) {
-                tickMillis += 50*retry[i];
                 break;
             }
             ++MIDataCMD;
        }
        if ( retry[3]>5 && retry[2]>5 && retry[1]>5 && retry[0]>5 ) { 
-            tickMillis =  timeNow + maxTimeForNextPing;    //give up...
-            if ( rfQualOk ) {
-                rfQualOk = false;
-            } else {
-                scanning = true;
-                    DEBUG_OUT.println(F("restart scanning"));
-            }
+            LowerChannelConfidence();
        };
      
     }
@@ -643,16 +625,15 @@ void isTime2Send (void) {
       }  //switch telegram
     SendPacket(dest, (uint8_t *)&sendBuf, size);
 
-    if ( !scanning && ( MIDataCMD == 0x09 && !pvCnt[0] || MIDataCMD == 0x11 && !pvCnt[1]) ) {
-          waitSts = 1;
-          RcvCH = channels[hoptx-1];
-          radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
-          radio1.startListening();
-          tickMillis = timeNow + backtickDuration;
-    }
+    timeLastSend = millis();
+    radio1.setChannel(RcvCH);//setChannel(DEFAULT_RECV_CHANNEL);
+    radio1.startListening();
+
     telegram++; 
     //MIDataCMD++;
-    } //if millis
+    
+}  //right slot?
+  }//if millis
 }//----isTime2Send---------------------------------------------------------------------------------------
 
 void DumpRcvPacket(NRF24_packet_t *p, uint8_t payloadLen) {
@@ -757,9 +738,12 @@ void MI1500DataMsg(NRF24_packet_t *p){
   FCNT = (uint8_t)(p->packet[26]);
   FCODE = (uint8_t)(p->packet[27]);
   }
-  
-  scanning = false;
-  
+
+  timeLastAck = millis();
+  if ( timeLastSend + 400 < timeLastAck && timeLastSend + 200 > timeLastAck) {
+      optTxCh = channelIdx;
+  }
+
   if (p->packet[2] == 0xB6 || p->packet[2] == 0x89) {
       PV= 0; TotalP[1]=P_DC; pvCnt[0]=1;
       }//port 1
@@ -795,14 +779,9 @@ void MI1500DataMsg(NRF24_packet_t *p){
   DEBUG_OUT.println(cStr);
   //if (p->packet[2] != 0xB9) tickMillis = millis();
   //tickMillis = millis() + maxTimeForNextPing; //we got a message and will just wait....
-  timeLastAck = millis();
-  if (checkAllPV() && checkAllSTS()) {
-    if (!complete) {
-        tickMillis = timeLastAck + maxTimeForNextPing; //we got all messages and will just wait....
-        complete = true;
-    } else {
-        tickMillis = timeLastAck;   // + backtickDuration?
-    }
+  
+  if (!complete && checkAllPV() && checkAllSTS()) {
+    complete = true;
   }
 }//--MI1500DataMsg------------------------------------------------------------------------------------------------------
 
@@ -870,11 +849,9 @@ void MI600DataMsg(NRF24_packet_t *p){
 
   if ( checkAllPV() && checkAllSTS() ) {
     if (!complete) {
-        tickMillis = timeLastAck + maxTimeForNextPing; //we got all messages and will just wait....
+        //tickMillis = timeLastAck + maxTimeForNextPing; //we got all messages and will just wait....
         complete = true;
     }
-  } else {
-    tickMillis = timeLastAck;   // + backtickDuration?
   }
 }//--------------------------------------------------------------------------------------------------
 
@@ -932,7 +909,7 @@ void RFAnalyse(void) {
 //--------------------------------------------------------------------------------------------------
 
   while (!packetBuffer.empty()) {
-    timeLastPacket = millis();
+    //timeLastPacket = millis();
     // One or more records present
     NRF24_packet_t *p = packetBuffer.getBack();
 
@@ -993,6 +970,7 @@ void RFAnalyse(void) {
   } //while (!packetBuffer.empty())  GET PACKET
 }//-----RFAnalyse-------------------------------------------------------------------------------
 
+/*
 uint8_t HopRcvCh(void){
 //----------------------------------------------------------------------------------------------------
  static uint8_t hop=-1;
@@ -1003,6 +981,24 @@ uint8_t HopRcvCh(void){
     RcvCH = channels[hop];
     return(RcvCH);
 }//----HopRcvCh----------------------------------------------------------------------------------------
+*/
+uint8_t HopChannels(void){
+//----------------------------------------------------------------------------------------------------
+    channelIdx++;
+    if (channelIdx >= sizeof(channels))// / sizeof(channels[0]) )
+      channelIdx = 0;
+    RcvCH = channels[channelIdx-1];
+    TxCH  = channels[channelIdx];
+    return(RcvCH);
+}//----HopRcvCh----------------------------------------------------------------------------------------
+void LowerChannelConfidence(void) {
+    if ( rfQualOk ) {
+      rfQualOk = false;
+    } else {
+      optTxCh = channelIdx+11;
+      DEBUG_OUT.println(F("restart scanning"));
+    }
+}
 
 uint8_t checkAllPV(void){
 //-------------------------------------------------------------------------------------------------
