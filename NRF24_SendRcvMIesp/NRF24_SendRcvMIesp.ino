@@ -510,7 +510,8 @@ void isTime2Send (void) {
   unsigned long timeNow = millis();
 
   //force send due to upcoming timeout for MI-1500?
-  if ( timeNow - forceTimeForNextPing > maxTimeForNextPing ) { 
+  if ( ( timeNow - forceTimeForNextPing > maxTimeForNextPing ) && !scanning ) { 
+     DEBUG_OUT.println(F("next cycle"));
      forceTimeForNextPing = timeNow + maxTimeForNextPing; // reset timer
      tickMillis = timeNow;                                // force sendout
      // new period
@@ -529,7 +530,7 @@ void isTime2Send (void) {
         MIDataCMD=0x09;
         //DEBUG_OUT.println("MI300");
         //tickMillis += 4700;    //200;
-        retry[0]++;
+        if ( !scanning ) { retry[0]++;}
         if ( retry[0] > 5 ) {
             tickMillis =  timeNow + maxTimeForNextPing;    //give up...
             if ( rfQualOk ) {
@@ -557,6 +558,7 @@ void isTime2Send (void) {
                     rfQualOk = false;
                 } else {
                     scanning = true;
+                    DEBUG_OUT.println(F("restart scanning"));
                 }
             } else {
                 tickMillis += 50*retry[1];
@@ -572,7 +574,7 @@ void isTime2Send (void) {
            }*/
         MIDataCMD = 0x0036;
         for (int8_t i = 0; i < 4; i++) {
-            retry[i]++;
+            if ( !scanning ) { retry[0]++;}
             if (!pvCnt[i] && retry[i] < 6) {
                 tickMillis += 50*retry[i];
                 break;
@@ -585,6 +587,7 @@ void isTime2Send (void) {
                 rfQualOk = false;
             } else {
                 scanning = true;
+                    DEBUG_OUT.println(F("restart scanning"));
             }
        };
      
@@ -911,12 +914,12 @@ void AnalyseMI1500(NRF24_packet_t *p,uint8_t payloadLen){
       break;
 
       case 0x89:    //1-2 ports
-      case 0x91:    //2 ports                 ev change with 0x91!!!!!!!!!
+      case 0x91:    //2 ports
         MI1500DataMsg(p);
         //MI600DataMsg(p);
       break;
       case 0x88:    //1-2 ports
-      case 0x92:    //2 ports                ev change with 0x92!!!!!!!!!
+      case 0x92:    //2 ports
           MI600StsMsg(p);
       break;
     default:
