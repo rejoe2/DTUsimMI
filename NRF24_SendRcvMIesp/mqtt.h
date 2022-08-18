@@ -11,6 +11,8 @@
 uint8_t checkAllPV(); //forward decl
 uint8_t checkAllSTS();
 uint8_t HopRcvCh();//forward decl
+uint8_t HopChannels();//forward decl
+
 
 uint8_t MQTT = 0;
 WiFiClient wifiClient;
