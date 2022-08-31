@@ -1,3 +1,5 @@
+
+
 #ifndef __WIFI_H
 #define __WIFI_H
 
@@ -6,6 +8,7 @@
 
 #include <ESP8266WiFi.h>
 #include <Pinger.h>       // von url=https://www.technologytourist.com   
+
 
 
 String SSID = "";         // bestes WLan

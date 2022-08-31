@@ -6,20 +6,29 @@
 
 #include <ArduinoMqttClient.h>
 
-uint8_t checkAllPV(); //forward decl
-uint8_t HopRcvCh();//forward decl
 
-uint8_t MQTT = MQTT_ON;
+
+uint8_t checkAllPV(); //forward decl
+uint8_t checkAllSTS();
+uint8_t HopRcvCh();//forward decl
+uint8_t HopChannels();//forward decl
+
+
+uint8_t MQTT = 1;
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
 const char MQTTbroker[] = MSERVER_IP;    //works
 int        MQTTport     = MSERVER_PORT;  //works
 const char MQTTid[]     = MQTT_ID;       //doesn't work
+//char ValueStr[30]=VALUE_TOPIC;           //not checked yet
+//char TopicStr[30]=SET_TOPIC;             //not checked yet
 float P_DTSU=0;
 
-char ValueStr[30]=VALUE_TOPIC;           //not checked yet
-char TopicStr[30]=SET_TOPIC;             //not checked yet
+
+
+char ValueStr[30]="inverter1";
+char TopicStr[30]="inverter1/set";
 
 void onMqttMessage(int messageSize) {
 //----------------------------------------------------------------------------------------
@@ -54,8 +63,7 @@ void onMqttMessage(int messageSize) {
 
 uint8_t setupMQTT(void){
 //----------------------------------------------------------------------------------------
-  if (!WITHMQTT)
-    return 0;
+
   DEBUG_OUT.print(F("Attempting to connect to the MQTT broker: "));
   DEBUG_OUT.println(MQTTbroker);
   if (!mqttClient.connect(MQTTbroker, MQTTport)) {
@@ -68,12 +76,10 @@ uint8_t setupMQTT(void){
     DEBUG_OUT.println(mqttClient.connectError());
     // set the message receive callback
     mqttClient.onMessage(onMqttMessage);
-    if (ZEROEXP)
-        DEBUG_OUT.print(F("Subscribing to topics.. "));
-        // subscribe to a topic
-        mqttClient.subscribe("ImpExpW"); //import export
+    DEBUG_OUT.println(F("Subscribing to topics.. "));
+    // subscribe to a topic
+    mqttClient.subscribe("ImpExpW"); //import export
     return 1;
   }
 
 }//----------------------------------------------------------------------------------------- 
-
